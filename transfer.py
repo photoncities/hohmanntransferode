@@ -130,20 +130,30 @@ while running:
     dx = earth_x - sat_x
     dy = earth_y - sat_y
     dist = np.sqrt(dx**2 + dy**2)
-    if dist > 0:
-        dir_unit = np.array([dx, dy]) / dist
-        satellite.thrustX = 10 * dir_unit[0]
-        satellite.thrustY = 10 * dir_unit[1]
+    # if dist > 0:
+    #     dir_unit = np.array([dx, dy]) / dist
+    #     satellite.thrustX = 100 * dir_unit[0]
+    #     satellite.thrustY = 100 * dir_unit[1]
+    satellite.thrustX = 10
 
     screen.fill((0, 0, 0))
     font = pygame.font.SysFont(None, 24)
     screen.blit(font.render(f"Time: {solver.t:.2f} s", True, (255, 255, 255)), (10, 10))
+    radius_km = orbital_radius / 1e3
+    text_surface = font.render(f"Orbital Radius: {radius_km:.2f} km", True, (255, 255, 255))
+    screen.blit(text_surface, (10, 30))
+
 
     if solver.successful():
         solver.integrate(solver.t + dt_vis)
         new_state = solver.y
         for i, b in enumerate(bodies):
             b.update_state(new_state[i * 4:(i + 1) * 4])
+
+        sat_x, sat_y = satellite.get_position()
+        earth_x, earth_y = earth.get_position()
+        orbital_radius = np.sqrt((sat_x - earth_x)**2 + (sat_y - earth_y)**2)
+
 
         if frame_count % 5 == 0:
             pred_trail = predict_trajectory(satellite, 5, 3600 * 4)
@@ -155,7 +165,7 @@ while running:
             color = (255, 255, 0) if b.name == "Sun" else (0, 0, 255) if b.name == "Earth" else (255, 100, 100) if b.name == "Mars" else (0, 255, 0)
             pygame.draw.circle(screen, color, (sx, sy), 5 if b.name != "Sun" else 10)
             if b.name == "Satellite":
-                tx, ty = satellite.thrustX, satellite.thrustY
+                tx, ty = -satellite.thrustX, -satellite.thrustY
                 mag = np.sqrt(tx**2 + ty**2)
                 if mag > 0:
                     tx /= mag
@@ -169,38 +179,55 @@ while running:
             pygame.draw.circle(screen, (200, 200, 200), pt[:2], 1)
 
         # Camera rendering
+        # Camera rendering
         cam_surface = pygame.Surface((CAM_WIDTH, CAM_HEIGHT))
         cam_surface.fill((20, 20, 20))
+
+        # Calculate satellite center on cam
+        sat_cx = CAM_WIDTH // 2
+        sat_cy = CAM_HEIGHT // 2
+
+        # Draw all bodies relative to satellite
         for b in bodies:
             bx, by = b.get_position()
-            cx = (bx - sat_x) * CAM_SCALE + CAM_WIDTH // 2
-            cy = (by - sat_y) * CAM_SCALE + CAM_HEIGHT // 2
+            dx = (bx - sat_x) * CAM_SCALE
+            dy = (by - sat_y) * CAM_SCALE
+            cx = sat_cx + dx
+            cy = sat_cy + dy
+
             color = (255, 255, 0) if b.name == "Sun" else (0, 0, 255) if b.name == "Earth" else (255, 100, 100) if b.name == "Mars" else (0, 255, 0)
             pygame.draw.circle(cam_surface, color, (int(cx), int(cy)), 4 if b.name != "Sun" else 6)
+
             if b.name == "Satellite":
-                tx, ty = satellite.thrustX, satellite.thrustY
+                # Draw thrust triangle offset from satellite center
+                tx, ty = -satellite.thrustX, -satellite.thrustY
                 mag = np.sqrt(tx**2 + ty**2)
                 if mag > 0:
                     tx /= mag
                     ty /= mag
-                    tip = (cx + tx * 12, cy - ty * 12)
-                    left = (cx - ty * 5, cy - tx * 5)
-                    right = (cx + ty * 5, cy + tx * 5)
+                    offset = 10
+                    length = 7
+                    width = 3.5
+
+                    ox = cx + tx * offset
+                    oy = cy + ty * offset
+
+                    tip = (ox + tx * length, oy + ty * length)
+                    left = (ox - ty * width, oy + tx * width)
+                    right = (ox + ty * width, oy - tx * width)
+
                     pygame.draw.polygon(cam_surface, (0, 255, 255), [tip, left, right])
 
-
-       
+        # Draw prediction trail
         for pt in pred_trail:
             px = (pt[2] - sat_x) * CAM_SCALE + CAM_WIDTH // 2
             py = (pt[3] - sat_y) * CAM_SCALE + CAM_HEIGHT // 2
             pygame.draw.circle(cam_surface, (0, 200, 0), (int(px), int(py)), 2)
 
+        # Draw cam border + center mark
         pygame.draw.rect(screen, (255, 255, 255), (*CAM_POS, CAM_WIDTH, CAM_HEIGHT), 1)
         screen.blit(cam_surface, CAM_POS)
-        # Re-center cam on screen
-        cam_center_x = CAM_POS[0] + CAM_WIDTH // 2
-        cam_center_y = CAM_POS[1] + CAM_HEIGHT // 2
-        pygame.draw.circle(screen, (0, 255, 255), (cam_center_x, cam_center_y), 3)
+        # pygame.draw.circle(screen, (255, 0, 0), (CAM_POS[0] + CAM_WIDTH // 2, CAM_POS[1] + CAM_HEIGHT // 2), 2)
 
 
     for event in pygame.event.get():
@@ -209,6 +236,15 @@ while running:
         elif event.type == pygame.KEYDOWN and event.key == pygame.K_t:
             speed_toggle = not speed_toggle
             dt_vis = slow_dt if speed_toggle else fast_dt
+
+        elif event.type == pygame.MOUSEWHEEL:
+            mx, my = pygame.mouse.get_pos()
+            if (CAM_POS[0] <= mx <= CAM_POS[0] + CAM_WIDTH and
+                CAM_POS[1] <= my <= CAM_POS[1] + CAM_HEIGHT):
+                zoom_factor = 0.9 if event.y > 0 else 1.1
+                CAM_SCALE *= zoom_factor
+                CAM_SCALE = max(1e-20, min(CAM_SCALE, 1e-2))  # clamp to avoid insanity
+
 
     pygame.display.flip()
     clock.tick(60)
