@@ -97,9 +97,10 @@ def equations(t, state, masses):
             r = np.sqrt(dx**2 + dy**2) + 1e-10
 
             # Skip Earth's gravity if Satellite is outside its SOI
-            if not (bodies[i].name == "Satellite" and bodies[j].name == "Earth" and r > R_SOI_EARTH):
+            if not (bodies[i].name == "Satellite" and ((bodies[j].name == "Earth" and r > R_SOI_EARTH) or (bodies[j].name == "Mars" and r > R_SOI_EARTH))):
                 axi += G * mj * dx / r**3
                 ayi += G * mj * dy / r**3
+      
 
         if bodies[i].name == "Satellite":
             axi += satellite.thrustX / satellite.mass
@@ -108,10 +109,20 @@ def equations(t, state, masses):
     return derivatives
 
 solver = ode(lambda t, y: equations(t, y, masses)).set_integrator(
-    'dop853', nsteps=10000, atol=1e-6, rtol=1e-6
+    'dop853', nsteps=10000, atol=8, rtol=1e-6
 )
 
 solver.set_initial_value(flatten_states(bodies), 0)
+
+def calculate_hohmann_phase_angle(r1, r2):
+    # Calculate time required to transfer on the Hohmann transfer orbit
+    a = (r1 + r2) / 2
+    sqrt_term =  (2*a)/(r1+r2)
+
+    return np.pi*(1-np.sqrt(sqrt_term))  # Phase angle in radians
+
+# Calculate phase angle for Earth-to-Mars transfer
+
 
 def predict_trajectory(sat, steps=5, step_size=3600):
     x, y = sat.get_position()
@@ -162,10 +173,12 @@ while running:
     text_surface = font.render(f"Orbital Radius: {radius_km:.2f} km", True, (255, 255, 255))
     screen.blit(text_surface, (10, 30))
 
-        # Compute angle from Sun to Earth and Sun to Mars
+       
+       # Compute angle from Sun to Earth and Sun to Mars
     sun = bodies[0]
     mars = bodies[2]
 
+    sx, sy = sun.get_position()
     ex, ey = earth.get_position()
     mx, my = mars.get_position()
 
@@ -176,11 +189,14 @@ while running:
     earth_angle %= 2 * np.pi
     mars_angle %= 2 * np.pi
 
+    r_earth = np.sqrt((earth_x - sx)**2 + (earth_y - sy)**2)
+    r_mars = np.sqrt((mx - sx)**2 + (my - sy)**2)
     # Compute angle Mars is ahead of Earth (circular prograde assumption)
     angle_diff = (mars_angle - earth_angle) % (2 * np.pi)
 
     # Target Hohmann angle in radians
-    hohmann_angle = np.radians(44.36)
+    hohmann_angle = calculate_hohmann_phase_angle(r_earth,  r_mars)
+
 
     # Check if we are close enough
     if abs(angle_diff - hohmann_angle) < np.radians(1) and not hohmann_burn_complete:  # within ~2 degrees
@@ -252,6 +268,7 @@ while running:
                 satellite.thrustY = 0
                 hohmann_burn_complete = True
                 hohmann_burn_active = False
+                dt_vis = 360 * 3
 
     # Display burn progress
     if hohmann_burn_active:
@@ -260,6 +277,7 @@ while running:
     elif hohmann_burn_complete:
         done_text = font.render(" Transfer burn complete", True, (0, 255, 0))
         screen.blit(done_text, (10, 170))
+        
 
 
    
@@ -358,7 +376,7 @@ while running:
             dx = (bx - sat_x) * CAM_SCALE
             dy = (by - sat_y) * CAM_SCALE
             cx = sat_cx + dx
-            cy = sat_cy + dy
+            cy = sat_cy - dy
 
             color = (255, 255, 0) if b.name == "Sun" else (0, 0, 255) if b.name == "Earth" else (255, 100, 100) if b.name == "Mars" else (0, 255, 0)
             pygame.draw.circle(cam_surface, color, (int(cx), int(cy)), 4 if b.name != "Sun" else 6)
