@@ -16,6 +16,7 @@ CENTER = (WIDTH // 2, HEIGHT // 2)
 CAM_WIDTH, CAM_HEIGHT = 200, 200
 CAM_SCALE = 1e-7
 CAM_POS = (WIDTH - CAM_WIDTH - 10, 10)
+R_SOI_EARTH = AU * (5.972e24 / 1.989e30)**(2/5)
 
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -23,10 +24,17 @@ clock = pygame.time.Clock()
 running = True
 frame_count = 0
 
-fast_dt = 3600 * 12
+fast_dt = 3600 * 12 * 3
 slow_dt = 360
 dt_vis = fast_dt
 speed_toggle = False
+
+hohmann_burn_active = False
+hohmann_burn_complete = False
+cumulative_dv = 0.0
+target_dv = 0.0
+substeps = 6  # Number of sub-steps in each frame (10 minutes per sub-step if dt_vis is 3600)
+
 
 class HeavenlyBody:
     def __init__(self, name, mass, x, y, vx, vy):
@@ -64,11 +72,13 @@ sat_y = earth_y
 sat_v = np.sqrt(G * earth.mass / orbital_radius)
 sat_vx = earth_vx
 sat_vy = earth_vy + sat_v
+trail = []  # This stores positions after the burn is complete
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
 bodies.append(satellite)
 
 masses = [b.mass for b in bodies]
+
 
 def flatten_states(bodies):
     return np.concatenate([body.state for body in bodies])
@@ -85,15 +95,22 @@ def equations(t, state, masses):
             mj = masses[j]
             dx, dy = xj - xi, yj - yi
             r = np.sqrt(dx**2 + dy**2) + 1e-10
-            axi += G * mj * dx / r**3
-            ayi += G * mj * dy / r**3
+
+            # Skip Earth's gravity if Satellite is outside its SOI
+            if not (bodies[i].name == "Satellite" and bodies[j].name == "Earth" and r > R_SOI_EARTH):
+                axi += G * mj * dx / r**3
+                ayi += G * mj * dy / r**3
+
         if bodies[i].name == "Satellite":
             axi += satellite.thrustX / satellite.mass
             ayi += satellite.thrustY / satellite.mass
         derivatives.extend([vxi, vyi, axi, ayi])
     return derivatives
 
-solver = ode(lambda t, y: equations(t, y, masses)).set_integrator('dop853')
+solver = ode(lambda t, y: equations(t, y, masses)).set_integrator(
+    'dop853', nsteps=10000, atol=1e-6, rtol=1e-6
+)
+
 solver.set_initial_value(flatten_states(bodies), 0)
 
 def predict_trajectory(sat, steps=5, step_size=3600):
@@ -166,13 +183,86 @@ while running:
     hohmann_angle = np.radians(44.36)
 
     # Check if we are close enough
-    if abs(angle_diff - hohmann_angle) < np.radians(2):  # within ~2 degrees
+    if abs(angle_diff - hohmann_angle) < np.radians(1):  # within ~2 degrees
         window_text = font.render("Optimal Hohmann transfer window!", True, (0, 255, 0))
+        dt_vis = slow_dt
         screen.blit(window_text, (10, 70))
     else:
         waiting_text = font.render(f"Hohmann window in: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (255, 255, 255))
         screen.blit(waiting_text, (10, 70))
 
+    r1 = AU
+    r2 = 1.524 * AU
+    mu = G * M_sun
+
+    earth = bodies[1]
+
+    if not hohmann_burn_complete:
+        dt_vis =21600
+        if abs(angle_diff - hohmann_angle) < np.radians(0.05):  # optimal window detected
+            if not hohmann_burn_active:
+                # Earth's gravitational parameter
+                mu_earth = G * earth.mass
+
+                # Satellite current orbital radius around Earth
+                r_sat_earth = np.sqrt((sat_x - earth_x)**2 + (sat_y - earth_y)**2)
+
+                # Orbital velocities around Sun
+                v_earth_sun = np.sqrt(G * M_sun / AU)
+                a_transfer = (AU + 1.524 * AU) / 2
+                v_transfer_sun = np.sqrt(G * M_sun * (2 / AU - 1 / a_transfer))
+                v_inf = v_transfer_sun - v_earth_sun  # should be ~2.9 km/s
+
+
+                # Satellite current circular orbital velocity around Earth
+                v_circular_sat = np.sqrt(mu_earth / r_sat_earth)
+
+                # Earth's escape velocity at satellite altitude
+                v_escape_sat = np.sqrt(2 * mu_earth / r_sat_earth)
+
+                # Total velocity required at satellite altitude
+                v_total_needed = np.sqrt(v_escape_sat**2 + v_inf**2)
+
+                # Target Δv for satellite
+                target_dv = v_total_needed - v_circular_sat + 2
+
+                cumulative_dv = 0.0
+                hohmann_burn_active = True
+
+    if hohmann_burn_active and not hohmann_burn_complete:
+        dt_vis = slow_dt/100  # Slow down for burn
+        # Apply thrust in satellite's prograde direction (relative to Earth)
+        rel_vx = satellite.state[2] - earth.state[2]
+        rel_vy = satellite.state[3] - earth.state[3]
+        rel_speed = np.sqrt(rel_vx**2 + rel_vy**2)
+
+        if rel_speed > 0:
+            tx = rel_vx / rel_speed
+            ty = rel_vy / rel_speed
+
+            thrust_mag = 5000  # Adjust as needed
+            satellite.thrustX = tx * thrust_mag
+            satellite.thrustY = ty * thrust_mag
+
+            dv_gain = thrust_mag * dt_vis / satellite.mass
+            cumulative_dv += dv_gain
+
+            if cumulative_dv >= target_dv:
+                satellite.thrustX = 0
+                satellite.thrustY = 0
+                hohmann_burn_complete = True
+                hohmann_burn_active = False
+
+    # Display burn progress
+    if hohmann_burn_active:
+        burn_text = font.render(f"Burning: Δv {cumulative_dv:.2f}/{target_dv:.2f} m/s", True, (255, 255, 0))
+        screen.blit(burn_text, (10, 170))
+    elif hohmann_burn_complete:
+        done_text = font.render(" Transfer burn complete", True, (0, 255, 0))
+        screen.blit(done_text, (10, 170))
+
+
+   
 
     if solver.successful():
         solver.integrate(solver.t + dt_vis)
@@ -237,6 +327,7 @@ while running:
                 y2 = center[1] - r * np.sin(t2)
                 pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
 
+
         # arc_start = mars_angle
         # remaining_angle = (angle_diff - hohmann_angle) % (2 * np.pi)
         # arc_end = mars_angle + remaining_angle
@@ -246,7 +337,7 @@ while running:
 
         # draw_angle_arc(screen, sun_screen, 80, arc_start, arc_end, (255, 255, 0))
         # Draw arc for angle between Earth and Mars
-        
+
         draw_angle_arc(screen, sun_screen, 60, earth_angle, mars_angle, (0, 255, 0))
 
         for pt in pred_trail:
@@ -303,6 +394,18 @@ while running:
         screen.blit(cam_surface, CAM_POS)
         # pygame.draw.circle(screen, (255, 0, 0), (CAM_POS[0] + CAM_WIDTH // 2, CAM_POS[1] + CAM_HEIGHT // 2), 2)
 
+        if hohmann_burn_complete:
+            # Track the satellite’s position after the burn
+            sat_x, sat_y = satellite.get_position()
+            trail.append((sat_x, sat_y))
+        for pos in trail:
+            screen_x = int(CENTER[0] + pos[0] * SCALE)
+            screen_y = int(CENTER[1] - pos[1] * SCALE)
+            pygame.draw.circle(screen, (200, 200, 200), (screen_x, screen_y), 2)
+
+        # Limit the trail length to avoid performance issues
+        if len(trail) > 1000:  # Adjust the limit as needed
+            trail = trail[-1000:]
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
