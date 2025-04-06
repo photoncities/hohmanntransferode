@@ -124,6 +124,8 @@ def predict_trajectory(sat, steps=5, step_size=3600):
     return points
 
 while running:
+
+    
     # Update thrust direction toward Earth
     sat_x, sat_y = satellite.get_position()
     earth_x, earth_y = earth.get_position()
@@ -134,7 +136,7 @@ while running:
     #     dir_unit = np.array([dx, dy]) / dist
     #     satellite.thrustX = 100 * dir_unit[0]
     #     satellite.thrustY = 100 * dir_unit[1]
-    satellite.thrustX = 10
+    # satellite.thrustX = 10
 
     screen.fill((0, 0, 0))
     font = pygame.font.SysFont(None, 24)
@@ -143,6 +145,34 @@ while running:
     text_surface = font.render(f"Orbital Radius: {radius_km:.2f} km", True, (255, 255, 255))
     screen.blit(text_surface, (10, 30))
 
+        # Compute angle from Sun to Earth and Sun to Mars
+    sun = bodies[0]
+    mars = bodies[2]
+
+    ex, ey = earth.get_position()
+    mx, my = mars.get_position()
+
+    earth_angle = np.arctan2(ey, ex)
+    mars_angle = np.arctan2(my, mx)
+
+    # Normalize angles to 0–2π
+    earth_angle %= 2 * np.pi
+    mars_angle %= 2 * np.pi
+
+    # Compute angle Mars is ahead of Earth (circular prograde assumption)
+    angle_diff = (mars_angle - earth_angle) % (2 * np.pi)
+
+    # Target Hohmann angle in radians
+    hohmann_angle = np.radians(44.36)
+
+    # Check if we are close enough
+    if abs(angle_diff - hohmann_angle) < np.radians(2):  # within ~2 degrees
+        window_text = font.render("Optimal Hohmann transfer window!", True, (0, 255, 0))
+        screen.blit(window_text, (10, 70))
+    else:
+        waiting_text = font.render(f"Hohmann window in: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (255, 255, 255))
+        screen.blit(waiting_text, (10, 70))
+
 
     if solver.successful():
         solver.integrate(solver.t + dt_vis)
@@ -150,10 +180,17 @@ while running:
         for i, b in enumerate(bodies):
             b.update_state(new_state[i * 4:(i + 1) * 4])
 
+        # Collision check: satellite inside Earth
         sat_x, sat_y = satellite.get_position()
         earth_x, earth_y = earth.get_position()
-        orbital_radius = np.sqrt((sat_x - earth_x)**2 + (sat_y - earth_y)**2)
+        distance = np.sqrt((sat_x - earth_x)**2 + (sat_y - earth_y)**2)
 
+        if distance <= R_earth:
+            crash_text = font.render("Simulation Failure; collision detected.", True, (255, 50, 50))
+            screen.blit(crash_text, (10, 50))
+            running = False
+
+           
 
         if frame_count % 5 == 0:
             pred_trail = predict_trajectory(satellite, 5, 3600 * 4)
@@ -174,6 +211,43 @@ while running:
                     left = (sx - ty * 5, sy - tx * 5)
                     right = (sx + ty * 5, sy + tx * 5)
                     pygame.draw.polygon(screen, (0, 255, 255), [tip, left, right])
+                # Sun position on screen
+        sun_screen = (int(CENTER[0]), int(CENTER[1]))
+
+        # Earth screen position
+        earth_x, earth_y = earth.get_position()
+        earth_screen = (int(CENTER[0] + earth_x * SCALE), int(CENTER[1] - earth_y * SCALE))
+
+        # Mars screen position
+        mars_x, mars_y = mars.get_position()
+        mars_screen = (int(CENTER[0] + mars_x * SCALE), int(CENTER[1] - mars_y * SCALE))
+
+        # Draw lines from Sun to Earth and Mars
+        pygame.draw.line(screen, (100, 100, 255), sun_screen, earth_screen, 2)
+        pygame.draw.line(screen, (255, 100, 100), sun_screen, mars_screen, 2)
+
+        # Optional: draw angle arc at Sun (approximate)
+        def draw_angle_arc(surface, center, r, start_angle, end_angle, color, steps=50):
+            for i in range(steps):
+                t1 = start_angle + (end_angle - start_angle) * i / steps
+                t2 = start_angle + (end_angle - start_angle) * (i + 1) / steps
+                x1 = center[0] + r * np.cos(t1)
+                y1 = center[1] - r * np.sin(t1)
+                x2 = center[0] + r * np.cos(t2)
+                y2 = center[1] - r * np.sin(t2)
+                pygame.draw.line(surface, color, (x1, y1), (x2, y2), 1)
+
+        # arc_start = mars_angle
+        # remaining_angle = (angle_diff - hohmann_angle) % (2 * np.pi)
+        # arc_end = mars_angle + remaining_angle
+
+        # if remaining_angle > np.pi:
+        #     arc_start, arc_end = arc_end, arc_start + 2 * np.pi  # draw shortest arc
+
+        # draw_angle_arc(screen, sun_screen, 80, arc_start, arc_end, (255, 255, 0))
+        # Draw arc for angle between Earth and Mars
+        
+        draw_angle_arc(screen, sun_screen, 60, earth_angle, mars_angle, (0, 255, 0))
 
         for pt in pred_trail:
             pygame.draw.circle(screen, (200, 200, 200), pt[:2], 1)
@@ -250,4 +324,10 @@ while running:
     clock.tick(60)
     frame_count += 1
 
-pygame.quit()
+while not running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            exit()
+        elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+            running = True
