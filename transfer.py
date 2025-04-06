@@ -183,11 +183,11 @@ while running:
     hohmann_angle = np.radians(44.36)
 
     # Check if we are close enough
-    if abs(angle_diff - hohmann_angle) < np.radians(1):  # within ~2 degrees
+    if abs(angle_diff - hohmann_angle) < np.radians(1) and not hohmann_burn_complete:  # within ~2 degrees
         window_text = font.render("Optimal Hohmann transfer window!", True, (0, 255, 0))
         dt_vis = slow_dt
         screen.blit(window_text, (10, 70))
-    else:
+    elif not hohmann_burn_complete:
         waiting_text = font.render(f"Hohmann window in: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (255, 255, 255))
         screen.blit(waiting_text, (10, 70))
 
@@ -224,7 +224,7 @@ while running:
                 v_total_needed = np.sqrt(v_escape_sat**2 + v_inf**2)
 
                 # Target Δv for satellite
-                target_dv = v_total_needed - v_circular_sat + 2
+                target_dv = v_total_needed - v_circular_sat
 
                 cumulative_dv = 0.0
                 hohmann_burn_active = True
@@ -282,8 +282,8 @@ while running:
 
            
 
-        if frame_count % 5 == 0:
-            pred_trail = predict_trajectory(satellite, 5, 3600 * 4)
+        # if frame_count % 5 == 0:
+        #     pred_trail = predict_trajectory(satellite, 5, 3600 * 4)
 
         for b in bodies:
             x, y = b.get_position()
@@ -340,8 +340,8 @@ while running:
 
         draw_angle_arc(screen, sun_screen, 60, earth_angle, mars_angle, (0, 255, 0))
 
-        for pt in pred_trail:
-            pygame.draw.circle(screen, (200, 200, 200), pt[:2], 1)
+        # for pt in pred_trail:
+        #     pygame.draw.circle(screen, (200, 200, 200), pt[:2], 1)
 
         # Camera rendering
         # Camera rendering
@@ -384,10 +384,10 @@ while running:
                     pygame.draw.polygon(cam_surface, (0, 255, 255), [tip, left, right])
 
         # Draw prediction trail
-        for pt in pred_trail:
-            px = (pt[2] - sat_x) * CAM_SCALE + CAM_WIDTH // 2
-            py = (pt[3] - sat_y) * CAM_SCALE + CAM_HEIGHT // 2
-            pygame.draw.circle(cam_surface, (0, 200, 0), (int(px), int(py)), 2)
+        # for pt in pred_trail:
+        #     px = (pt[2] - sat_x) * CAM_SCALE + CAM_WIDTH // 2
+        #     py = (pt[3] - sat_y) * CAM_SCALE + CAM_HEIGHT // 2
+        #     pygame.draw.circle(cam_surface, (0, 200, 0), (int(px), int(py)), 2)
 
         # Draw cam border + center mark
         pygame.draw.rect(screen, (255, 255, 255), (*CAM_POS, CAM_WIDTH, CAM_HEIGHT), 1)
@@ -404,8 +404,8 @@ while running:
             pygame.draw.circle(screen, (200, 200, 200), (screen_x, screen_y), 2)
 
         # Limit the trail length to avoid performance issues
-        if len(trail) > 1000:  # Adjust the limit as needed
-            trail = trail[-1000:]
+        # if len(trail) > 1000:  # Adjust the limit as needed
+        #     trail = trail[-1000:]
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
