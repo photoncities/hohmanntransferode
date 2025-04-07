@@ -24,7 +24,7 @@ clock = pygame.time.Clock()
 running = True
 frame_count = 0
 
-fast_dt = 3600 * 12 * 3
+fast_dt = 3600 * 6
 slow_dt = 360
 dt_vis = fast_dt
 speed_toggle = False
@@ -59,6 +59,7 @@ class Satellite(HeavenlyBody):
 
 bodies = [
     HeavenlyBody("Sun", M_sun, 0, 0, 0, 0),
+
     HeavenlyBody("Earth", 5.972e24, AU, 0, 0, np.sqrt(G * M_sun / AU)),
     HeavenlyBody("Mars", 6.4171e25, 1.524 * AU, 0, 0, np.sqrt(G * M_sun / (1.524 * AU))),
 ]
@@ -66,13 +67,17 @@ bodies = [
 earth = bodies[1]
 earth_x, earth_y = earth.state[0:2]
 earth_vx, earth_vy = earth.state[2:4]
-orbital_radius = R_earth + 400e5
-sat_x = earth_x + orbital_radius
+orbital_radius_SAT = R_earth + 400000e+2  
+sat_x = earth_x + orbital_radius_SAT
 sat_y = earth_y
-sat_v = np.sqrt(G * earth.mass / orbital_radius)
+sat_v = np.sqrt(G * earth.mass / orbital_radius_SAT)
 sat_vx = earth_vx
 sat_vy = earth_vy + sat_v
 trail = []  # This stores positions after the burn is complete
+recent_distances = []
+max_history = 50  # tweak based on frame rate
+perigee_ready = False
+
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
 bodies.append(satellite)
@@ -115,11 +120,9 @@ solver = ode(lambda t, y: equations(t, y, masses)).set_integrator(
 solver.set_initial_value(flatten_states(bodies), 0)
 
 def calculate_hohmann_phase_angle(r1, r2):
-    # Calculate time required to transfer on the Hohmann transfer orbit
     a = (r1 + r2) / 2
-    sqrt_term =  (2*a)/(r1+r2)
-
-    return np.pi*(1-np.sqrt(sqrt_term))  # Phase angle in radians
+    phase_angle_rad = np.pi * (1 - np.sqrt((r1 + r2)**3 / (8 * r2**3)))
+    return phase_angle_rad  # radians
 
 # Calculate phase angle for Earth-to-Mars transfer
 
@@ -169,7 +172,7 @@ while running:
     screen.fill((0, 0, 0))
     font = pygame.font.SysFont(None, 24)
     screen.blit(font.render(f"Time: {solver.t:.2f} s", True, (255, 255, 255)), (10, 10))
-    radius_km = orbital_radius / 1e3
+    radius_km = orbital_radius_SAT / 1e3
     text_surface = font.render(f"Orbital Radius: {radius_km:.2f} km", True, (255, 255, 255))
     screen.blit(text_surface, (10, 30))
 
@@ -197,10 +200,22 @@ while running:
     # Target Hohmann angle in radians
     hohmann_angle = calculate_hohmann_phase_angle(r_earth,  r_mars)
 
+        # Vectors from Earth to Satellite and Earth to Sun
+    r_es = np.array([sat_x - earth_x, sat_y - earth_y])
+    r_ec = np.array([sx - earth_x, sy - earth_y])  # Earth to Sun
+
+    # Normalize both
+    r_es_norm = r_es / np.linalg.norm(r_es)
+    r_ec_norm = r_ec / np.linalg.norm(r_ec)
+
+    # Dot product close to -1 → perigee condition
+    alignment = np.dot(r_es_norm, r_ec_norm)
+    perigee_ready = alignment < -0.9995  # adjust threshold if needed
+
 
     # Check if we are close enough
-    if abs(angle_diff - hohmann_angle) < np.radians(1) and not hohmann_burn_complete:  # within ~2 degrees
-        window_text = font.render("Optimal Hohmann transfer window!", True, (0, 255, 0))
+    if abs(angle_diff - hohmann_angle) < np.radians(2) and not hohmann_burn_complete:  # within ~2 degrees
+        window_text = font.render(f"Optimal Hohmann transfer window! In: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (0, 255, 0))
         dt_vis = slow_dt
         screen.blit(window_text, (10, 70))
     elif not hohmann_burn_complete:
@@ -210,12 +225,17 @@ while running:
     r1 = AU
     r2 = 1.524 * AU
     mu = G * M_sun
+    
 
     earth = bodies[1]
 
     if not hohmann_burn_complete:
-        dt_vis =21600
-        if abs(angle_diff - hohmann_angle) < np.radians(0.05):  # optimal window detected
+        
+                # Trigger burn slightly *before* ideal angle
+        early_margin = np.radians(0.35)  # start burn ~0.5° early
+        if hohmann_angle <= angle_diff < hohmann_angle + early_margin and perigee_ready:
+
+
             if not hohmann_burn_active:
                 # Earth's gravitational parameter
                 mu_earth = G * earth.mass
@@ -246,29 +266,33 @@ while running:
                 hohmann_burn_active = True
 
     if hohmann_burn_active and not hohmann_burn_complete:
-        dt_vis = slow_dt/100  # Slow down for burn
-        # Apply thrust in satellite's prograde direction (relative to Earth)
+        dt_vis = slow_dt / 100  # Precision timestep for burn
+
+        
+        # Burn in prograde direction relative to Earth (Earth-centered frame)
         rel_vx = satellite.state[2] - earth.state[2]
         rel_vy = satellite.state[3] - earth.state[3]
-        rel_speed = np.sqrt(rel_vx**2 + rel_vy**2)
+        rel_speed = np.hypot(rel_vx, rel_vy)
 
-        if rel_speed > 0:
-            tx = rel_vx / rel_speed
-            ty = rel_vy / rel_speed
+        tx = rel_vx / rel_speed
+        ty = rel_vy / rel_speed
 
-            thrust_mag = 5000  # Adjust as needed
-            satellite.thrustX = tx * thrust_mag
-            satellite.thrustY = ty * thrust_mag
 
-            dv_gain = thrust_mag * dt_vis / satellite.mass
-            cumulative_dv += dv_gain
+        thrust_mag = 5000  # N
+        satellite.thrustX = tx * thrust_mag
+        satellite.thrustY = ty * thrust_mag
 
-            if cumulative_dv >= target_dv:
-                satellite.thrustX = 0
-                satellite.thrustY = 0
-                hohmann_burn_complete = True
-                hohmann_burn_active = False
-                dt_vis = 360 * 3
+        dv_gain = thrust_mag * dt_vis / satellite.mass
+        cumulative_dv += dv_gain
+
+        if cumulative_dv >= target_dv:
+            satellite.thrustX = 0
+            satellite.thrustY = 0
+            hohmann_burn_complete = True
+            hohmann_burn_active = False
+            dt_vis = 360 * 3
+
+
 
     # Display burn progress
     if hohmann_burn_active:
@@ -356,6 +380,18 @@ while running:
         # draw_angle_arc(screen, sun_screen, 80, arc_start, arc_end, (255, 255, 0))
         # Draw arc for angle between Earth and Mars
 
+        # Draw hollow circles for orbital radii of planets centered on the Sun
+        for b in bodies:
+            if b.name != "Sun" and b.name != "Satellite":
+                orbital_radius_SAT = np.sqrt((b.state[0] - sx)**2 + (b.state[1] - sy)**2)
+                pygame.gfxdraw.aacircle(
+                    screen,
+                    int(CENTER[0]),
+                    int(CENTER[1]),
+                    int(orbital_radius_SAT * SCALE),
+                    (100, 100, 100)
+                )
+
         draw_angle_arc(screen, sun_screen, 60, earth_angle, mars_angle, (0, 255, 0))
 
         # for pt in pred_trail:
@@ -383,7 +419,7 @@ while running:
 
             if b.name == "Satellite":
                 # Draw thrust triangle offset from satellite center
-                tx, ty = -satellite.thrustX, -satellite.thrustY
+                tx, ty = -satellite.thrustX, satellite.thrustY
                 mag = np.sqrt(tx**2 + ty**2)
                 if mag > 0:
                     tx /= mag
