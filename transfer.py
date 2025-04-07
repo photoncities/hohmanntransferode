@@ -211,17 +211,18 @@ while running:
 
     # Dot product close to -1 → perigee condition
     alignment = np.dot(r_es_norm, r_ec_norm)
-    perigee_ready = alignment < -0.9995  # adjust threshold if needed
-
+    perigee_ready = alignment < -.7995  # adjust threshold if needed
+    perigee_ready_text = font.render(f"Perigee Ready: {perigee_ready}", True, (255, 255, 255))
+    screen.blit(perigee_ready_text, (10, 70))
 
     # Check if we are close enough
     if abs(angle_diff - hohmann_angle) < np.radians(2) and not hohmann_burn_complete:  # within ~2 degrees
         window_text = font.render(f"Optimal Hohmann transfer window! In: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (0, 255, 0))
         dt_vis = slow_dt
-        screen.blit(window_text, (10, 70))
+        screen.blit(window_text, (10, 80))
     elif not hohmann_burn_complete:
         waiting_text = font.render(f"Hohmann window in: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (255, 255, 255))
-        screen.blit(waiting_text, (10, 70))
+        screen.blit(waiting_text, (10, 100))
 
     r1 = AU
     r2 = 1.524 * AU
@@ -233,7 +234,8 @@ while running:
     if not hohmann_burn_complete:
         
                 # Trigger burn slightly *before* ideal angle
-        early_margin = np.radians(0.5)  # start burn ~0.5° early
+        early_margin = np.radians(0.2)  # start burn ~0.5° early
+
         if hohmann_angle <= angle_diff < hohmann_angle + early_margin and perigee_ready:
 
 
