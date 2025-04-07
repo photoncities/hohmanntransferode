@@ -80,6 +80,8 @@ recent_distances = []
 max_history = 50  # tweak based on frame rate
 apogee_ready = False
 first = True
+cumulative_circ_dv = 0.0
+circularization_burn_complete = False
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
 bodies.append(satellite)
@@ -340,7 +342,49 @@ while running:
             
                 
            
-        
+    if hohmann_burn_complete and distance_to_mars < 4.5e9 and not circularization_burn_complete:
+    # Constants
+        mu_mars = G * mars.mass
+
+        # Positions
+        sat_x, sat_y = satellite.get_position()
+        mars_x, mars_y = mars.get_position()
+        distance_to_mars = np.sqrt((sat_x - mars_x)**2 + (sat_y - mars_y)**2)
+
+        # Velocities
+        sat_vx, sat_vy = satellite.get_velocity()
+        mars_vx, mars_vy = mars.get_velocity()
+
+        # Relative velocity vector
+        rel_vx = sat_vx - mars_vx
+        rel_vy = sat_vy - mars_vy
+        rel_speed = np.hypot(rel_vx, rel_vy)
+
+        # Desired orbital velocity
+        v_circular = np.sqrt(mu_mars / distance_to_mars)
+
+        # Velocity difference
+        dv_needed = rel_speed - v_circular
+
+        # Stop if we're close enough
+        if abs(dv_needed) < 0.5:
+            satellite.thrustX = 0
+            satellite.thrustY = 0
+            circularization_burn_complete = True
+        else:
+            # Retrograde unit vector
+            tx = -rel_vx / rel_speed
+            ty = -rel_vy / rel_speed
+
+            # Smart thrust: only enough to close gap in this frame
+            thrust_mag = np.clip(dv_needed * satellite.mass / dt_vis, 0, 3000)
+
+            # Apply thrust
+            satellite.thrustX = tx * thrust_mag
+            satellite.thrustY = ty * thrust_mag
+
+
+
 
 
    
@@ -490,7 +534,7 @@ while running:
         if hohmann_burn_complete:
             # Track the satellite’s position after the burn
             sat_x, sat_y = satellite.get_position()
-            trail.append((sat_x, sat_y))
+            # trail.append((sat_x, sat_y))
         for pos in trail:
             screen_x = int(CENTER[0] + pos[0] * SCALE)
             screen_y = int(CENTER[1] - pos[1] * SCALE)
