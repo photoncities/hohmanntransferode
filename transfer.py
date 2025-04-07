@@ -36,6 +36,7 @@ cumulative_dv = 0.0
 target_dv = 0.0
 substeps = 6  # Number of sub-steps in each frame (10 minutes per sub-step if dt_vis is 3600)
 timestamp = None
+hohmann_ready = False
 
 class HeavenlyBody:
     def __init__(self, name, mass, x, y, vx, vy):
@@ -77,7 +78,7 @@ sat_vy = earth_vy + sat_v
 trail = []  # This stores positions after the burn is complete
 recent_distances = []
 max_history = 50  # tweak based on frame rate
-perigee_ready = False
+apogee_ready = False
 first = True
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
@@ -209,12 +210,13 @@ while running:
     r_es_norm = r_es / np.linalg.norm(r_es)
     r_ec_norm = r_ec / np.linalg.norm(r_ec)
 
-    # Dot product close to -1 → perigee condition
+    # Dot product close to -1 → apogee condition
     alignment = np.dot(r_es_norm, r_ec_norm)
-    perigee_ready = alignment < -.7995  # adjust threshold if needed
-    perigee_ready_text = font.render(f"Perigee Ready: {perigee_ready}", True, (255, 255, 255))
-    screen.blit(perigee_ready_text, (10, 70))
+    apogee_ready = alignment < -.8995  # adjust threshold if needed
+    apogee_ready_text = font.render(f"Apogee Ready: {apogee_ready}", True, (255, 255, 255))
+    screen.blit(apogee_ready_text, (10, 70))
 
+    
     # Check if we are close enough
     if abs(angle_diff - hohmann_angle) < np.radians(2) and not hohmann_burn_complete:  # within ~2 degrees
         window_text = font.render(f"Optimal Hohmann transfer window! In: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (0, 255, 0))
@@ -234,9 +236,11 @@ while running:
     if not hohmann_burn_complete:
         
                 # Trigger burn slightly *before* ideal angle
-        early_margin = np.radians(0.2)  # start burn ~0.5° early
+        early_margin = np.radians(0.05)  # start burn ~0.05° early
+        if hohmann_angle <= angle_diff < hohmann_angle + early_margin:
+            hohmann_ready = True
 
-        if hohmann_angle <= angle_diff < hohmann_angle + early_margin and perigee_ready:
+        if hohmann_ready and apogee_ready:
 
 
             if not hohmann_burn_active:
