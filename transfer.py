@@ -82,6 +82,7 @@ apogee_ready = False
 first = True
 cumulative_circ_dv = 0.0
 circularization_burn_complete = False
+final_tweak_complete = False
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
 bodies.append(satellite)
@@ -214,7 +215,7 @@ while running:
 
     # Dot product close to -1 → apogee condition
     alignment = np.dot(r_es_norm, r_ec_norm)
-    apogee_ready = alignment < -.8995  # adjust threshold if needed
+    apogee_ready = alignment < -.7995  # adjust threshold if needed
     apogee_ready_text = font.render(f"Apogee Ready: {apogee_ready}", True, (255, 255, 255))
     screen.blit(apogee_ready_text, (10, 70))
 
@@ -342,48 +343,60 @@ while running:
             
                 
            
-    if hohmann_burn_complete and distance_to_mars < 4.5e9 and not circularization_burn_complete:
-    # Constants
-        mu_mars = G * mars.mass
-
-        # Positions
-        sat_x, sat_y = satellite.get_position()
+    if hohmann_burn_complete and distance_to_mars < 2e+9 and not circularization_burn_complete:
+    # sat_x, sat_y = satellite.get_position()
         mars_x, mars_y = mars.get_position()
         distance_to_mars = np.sqrt((sat_x - mars_x)**2 + (sat_y - mars_y)**2)
+        mu_mars = G * mars.mass
 
-        # Velocities
         sat_vx, sat_vy = satellite.get_velocity()
         mars_vx, mars_vy = mars.get_velocity()
 
-        # Relative velocity vector
         rel_vx = sat_vx - mars_vx
         rel_vy = sat_vy - mars_vy
         rel_speed = np.hypot(rel_vx, rel_vy)
-
-        # Desired orbital velocity
         v_circular = np.sqrt(mu_mars / distance_to_mars)
-
-        # Velocity difference
         dv_needed = rel_speed - v_circular
 
-        # Stop if we're close enough
         if abs(dv_needed) < 0.5:
             satellite.thrustX = 0
             satellite.thrustY = 0
             circularization_burn_complete = True
+
+            
+          
         else:
-            # Retrograde unit vector
             tx = -rel_vx / rel_speed
             ty = -rel_vy / rel_speed
-
-            # Smart thrust: only enough to close gap in this frame
             thrust_mag = np.clip(dv_needed * satellite.mass / dt_vis, 0, 3000)
-
-            # Apply thrust
             satellite.thrustX = tx * thrust_mag
             satellite.thrustY = ty * thrust_mag
 
+    # if circularization_burn_complete and not final_tweak_complete:
+    #     sat_x, sat_y = satellite.get_position()
+    #     mars_x, mars_y = mars.get_position()
+    #     distance_to_mars = np.sqrt((sat_x - mars_x)**2 + (sat_y - mars_y)**2)
+    #     mu_mars = G * mars.mass
 
+    #     sat_vx, sat_vy = satellite.get_velocity()
+    #     mars_vx, mars_vy = mars.get_velocity()
+
+    #     rel_vx = sat_vx - mars_vx
+    #     rel_vy = sat_vy - mars_vy
+    #     rel_speed = np.hypot(rel_vx, rel_vy)
+    #     v_circular = np.sqrt(mu_mars / distance_to_mars)
+    #     dv_adjust = rel_speed - v_circular
+
+    #     if abs(dv_adjust) < 0.2:
+    #         satellite.thrustX = 0
+    #         satellite.thrustY = 0
+    #         final_tweak_complete = True
+    #     else:
+    #         tx = -rel_vx / rel_speed if dv_adjust > 0 else rel_vx / rel_speed
+    #         ty = -rel_vy / rel_speed if dv_adjust > 0 else rel_vy / rel_speed
+    #         thrust_mag = np.clip(abs(dv_adjust) * satellite.mass / dt_vis, 0, 1000)
+    #         satellite.thrustX = tx * thrust_mag
+    #         satellite.thrustY = ty * thrust_mag
 
 
 
