@@ -2,6 +2,7 @@ import pygame
 import numpy as np
 import pygame.gfxdraw
 from scipy.integrate import ode
+import datetime
 
 # Constants
 G = 6.67430e-11
@@ -34,7 +35,7 @@ hohmann_burn_complete = False
 cumulative_dv = 0.0
 target_dv = 0.0
 substeps = 6  # Number of sub-steps in each frame (10 minutes per sub-step if dt_vis is 3600)
-
+timestamp = None
 
 class HeavenlyBody:
     def __init__(self, name, mass, x, y, vx, vy):
@@ -77,7 +78,7 @@ trail = []  # This stores positions after the burn is complete
 recent_distances = []
 max_history = 50  # tweak based on frame rate
 perigee_ready = False
-
+first = True
 
 satellite = Satellite("Satellite", 1000, sat_x, sat_y, sat_vx, sat_vy)
 bodies.append(satellite)
@@ -232,7 +233,7 @@ while running:
     if not hohmann_burn_complete:
         
                 # Trigger burn slightly *before* ideal angle
-        early_margin = np.radians(0.35)  # start burn ~0.5° early
+        early_margin = np.radians(0.5)  # start burn ~0.5° early
         if hohmann_angle <= angle_diff < hohmann_angle + early_margin and perigee_ready:
 
 
@@ -292,15 +293,47 @@ while running:
             hohmann_burn_active = False
             dt_vis = 360 * 3
 
+   
+    sat_x, sat_y = satellite.get_position()
+    mars_x, mars_y = mars.get_position()
+    distance_to_mars = np.sqrt((sat_x - mars_x)**2 + (sat_y - mars_y)**2)
 
+    
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") if timestamp is None else timestamp# Get the current real-world timestamp
+    filename = f"distance_to_mars_{timestamp}.txt"
+    recorded_distance = 0
 
+    
+
+                
     # Display burn progress
     if hohmann_burn_active:
         burn_text = font.render(f"Burning: Δv {cumulative_dv:.2f}/{target_dv:.2f} m/s", True, (255, 255, 0))
         screen.blit(burn_text, (10, 170))
+        
     elif hohmann_burn_complete:
         done_text = font.render(" Transfer burn complete", True, (0, 255, 0))
         screen.blit(done_text, (10, 170))
+        # Write the distance of the satellite to Mars to a timestamped file
+        if first:
+            with open(filename, "w") as file:
+                file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+                first = False
+        else:
+            with open(filename, "r+") as file:
+                content = file.read()
+                if content:
+                    recorded_distance = float(content.split(":")[1].strip().split()[0])
+                    if distance_to_mars < recorded_distance:
+                        file.seek(0)
+                        file.truncate()
+                        file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+                else:
+                    file.seek(0)
+                    file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+            
+                
+           
         
 
 
@@ -472,7 +505,7 @@ while running:
             mx, my = pygame.mouse.get_pos()
             if (CAM_POS[0] <= mx <= CAM_POS[0] + CAM_WIDTH and
                 CAM_POS[1] <= my <= CAM_POS[1] + CAM_HEIGHT):
-                zoom_factor = 0.9 if event.y > 0 else 1.1
+                zoom_factor = 0.9 if event.y < 0 else 1.1
                 CAM_SCALE *= zoom_factor
                 CAM_SCALE = max(1e-20, min(CAM_SCALE, 1e-2))  # clamp to avoid insanity
 
