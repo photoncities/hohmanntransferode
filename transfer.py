@@ -10,7 +10,6 @@ M_sun = 1.989e30
 AU = 1.496e11
 YEAR = 365.25 * 24 * 3600
 R_earth = 6.371e6
-
 WIDTH, HEIGHT = 1000, 1000
 SCALE = WIDTH / (7 * AU)
 CENTER = (WIDTH // 2, HEIGHT // 2)
@@ -63,13 +62,13 @@ bodies = [
     HeavenlyBody("Sun", M_sun, 0, 0, 0, 0),
 
     HeavenlyBody("Earth", 5.972e24, AU, 0, 0, np.sqrt(G * M_sun / AU)),
-    HeavenlyBody("Mars", 6.4171e25, 1.524 * AU, 0, 0, np.sqrt(G * M_sun / (1.524 * AU))),
+    HeavenlyBody("Mars", 6.4171e25, 0, 1.524 * AU, -np.sqrt(G * M_sun / (1.524 * AU)), 0),
 ]
 
 earth = bodies[1]
 earth_x, earth_y = earth.state[0:2]
 earth_vx, earth_vy = earth.state[2:4]
-orbital_radius_SAT = R_earth + 400000e+2  
+orbital_radius_SAT = R_earth + 350000e+2  
 sat_x = earth_x + orbital_radius_SAT
 sat_y = earth_y
 sat_v = np.sqrt(G * earth.mass / orbital_radius_SAT)
@@ -119,7 +118,7 @@ def equations(t, state, masses):
     return derivatives
 
 solver = ode(lambda t, y: equations(t, y, masses)).set_integrator(
-    'dop853', nsteps=10000, atol=8, rtol=1e-6
+    'dop853', nsteps=10000, atol=1e-6, rtol=1e-6
 )
 
 solver.set_initial_value(flatten_states(bodies), 0)
@@ -215,13 +214,15 @@ while running:
 
     # Dot product close to -1 → apogee condition
     alignment = np.dot(r_es_norm, r_ec_norm)
-    apogee_ready = alignment < -.7995  # adjust threshold if needed
+    apogee_threshold = -.9995  # Adjust this threshold if needed
+    apogee_ready = alignment < apogee_threshold  # adjust threshold if needed
+    
     apogee_ready_text = font.render(f"Apogee Ready: {apogee_ready}", True, (255, 255, 255))
     screen.blit(apogee_ready_text, (10, 70))
 
     
     # Check if we are close enough
-    if abs(angle_diff - hohmann_angle) < np.radians(2) and not hohmann_burn_complete:  # within ~2 degrees
+    if abs(angle_diff - hohmann_angle) < np.radians(1) and not hohmann_burn_complete:  # within ~2 degrees
         window_text = font.render(f"Optimal Hohmann transfer window! In: {np.degrees((angle_diff - hohmann_angle)% (2*np.pi)):.2f}°", True, (0, 255, 0))
         dt_vis = slow_dt
         screen.blit(window_text, (10, 80))
@@ -238,9 +239,9 @@ while running:
 
     if not hohmann_burn_complete:
         
-                # Trigger burn slightly *before* ideal angle
+        # Trigger burn slightly *before* ideal angle
         early_margin = np.radians(0.05)  # start burn ~0.05° early
-        if hohmann_angle <= angle_diff < hohmann_angle + early_margin:
+        if abs(angle_diff - hohmann_angle) < early_margin and not hohmann_burn_active:
             hohmann_ready = True
 
         if hohmann_ready and apogee_ready:
@@ -250,30 +251,75 @@ while running:
                 # Earth's gravitational parameter
                 mu_earth = G * earth.mass
 
-                # Satellite current orbital radius around Earth
+              # Satellite current orbital radius around Earth
                 r_sat_earth = np.sqrt((sat_x - earth_x)**2 + (sat_y - earth_y)**2)
 
                 # Orbital velocities around Sun
                 v_earth_sun = np.sqrt(G * M_sun / AU)
                 a_transfer = (AU + 1.524 * AU) / 2
                 v_transfer_sun = np.sqrt(G * M_sun * (2 / AU - 1 / a_transfer))
-                v_inf = v_transfer_sun - v_earth_sun  # should be ~2.9 km/s
+                v_inf = v_transfer_sun - v_earth_sun  # heliocentric excess velocity
 
+                # Required hyperbolic velocity at LEO to reach v_inf
+                v_hyperbolic = np.sqrt(v_inf**2 + 2 * mu_earth / r_sat_earth)
 
-                # Satellite current circular orbital velocity around Earth
+                # Current circular orbital speed in LEO
                 v_circular_sat = np.sqrt(mu_earth / r_sat_earth)
+ 
+                # Delta-v needed for burn
+                target_dv = v_hyperbolic - v_circular_sat + 300
 
-                # Earth's escape velocity at satellite altitude
-                v_escape_sat = np.sqrt(2 * mu_earth / r_sat_earth)
+              
 
-                # Total velocity required at satellite altitude
-                v_total_needed = np.sqrt(v_escape_sat**2 + v_inf**2)
-
-                # Target Δv for satellite
-                target_dv = v_total_needed - v_circular_sat
 
                 cumulative_dv = 0.0
                 hohmann_burn_active = True
+
+    if hohmann_burn_complete:
+          # Assume satellite is now in heliocentric orbit (post-Earth escape)
+
+                # Satellite's heliocentric position vector
+        r_vec = np.array([sat_x, sat_y]) - np.array([sun.get_position()[0], sun.get_position()[1]])
+        r_mag = np.linalg.norm(r_vec)
+
+        # Satellite's heliocentric velocity vector
+        v_vec = np.array([sat_vx, sat_vy])  # make sure these are heliocentric!
+        v_mag = np.linalg.norm(v_vec)
+
+        # Gravitational parameter for the Sun
+        mu_sun = G * M_sun
+
+        # Promote to 3D for correct vector math (assume z = 0)
+        sun_x = sun.get_position()[0]
+        sun_y = sun.get_position()[1]
+
+        r_vec_3d = np.array([sat_x - sun_x, sat_y - sun_y, 0])
+        v_vec_3d = np.array([sat_vx, sat_vy, 0])
+
+        # Angular momentum vector (3D)
+        h_vec = np.cross(r_vec_3d, v_vec_3d)  # this will point along z
+
+        # Eccentricity vector (3D)
+        e_vec = (np.cross(v_vec_3d, h_vec) / mu_sun) - (r_vec_3d / np.linalg.norm(r_vec_3d))
+
+        # Get magnitude and 2D projection
+        e_mag = np.linalg.norm(e_vec)
+        e_vec_2d = e_vec[:2]  # drop z component for 2D plotting or logic
+
+        # Semi-major axis
+        a = 1 / ((2 / np.linalg.norm(r_vec_3d)) - (np.linalg.norm(v_vec_3d)**2 / mu_sun))
+
+        r_aphelion = a * (1 + e_mag)
+        r_aphelion_vec = r_aphelion * (-e_vec[:2] / e_mag)  # 2D position vector
+
+        screen_pos = r_perihelion_vec * SCALE + sun_screen
+
+
+        #scaled to screen
+        sun_screen_pos = np.array([CENTER[0], CENTER[1]])
+        screen_pos = (r_perihelion_vec * SCALE)+ sun_screen_pos
+        
+        pygame.draw.circle(screen, (255, 0, 0), screen_pos.astype(int), 50)
 
     if hohmann_burn_active and not hohmann_burn_complete:
         dt_vis = slow_dt / 100  # Precision timestep for burn
@@ -326,7 +372,7 @@ while running:
         # Write the distance of the satellite to Mars to a timestamped file
         if first:
             with open(filename, "w") as file:
-                file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+                file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\nEarly Margin: {np.degrees(early_margin)} | Apogee Threshold: {apogee_threshold}\n")
                 first = False
         else:
             with open(filename, "r+") as file:
@@ -336,10 +382,10 @@ while running:
                     if distance_to_mars < recorded_distance:
                         file.seek(0)
                         file.truncate()
-                        file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+                        file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\nEarly Margin: {np.degrees(early_margin)} | Apogee Threshold: {apogee_threshold}\n")
                 else:
                     file.seek(0)
-                    file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\n")
+                    file.write(f"Distance to Mars: {distance_to_mars:.2f} meters\nEarly Margin: {np.degrees(early_margin)} | Apogee Threshold: {apogee_threshold}\n")
             
                 
            
@@ -544,14 +590,28 @@ while running:
         screen.blit(cam_surface, CAM_POS)
         # pygame.draw.circle(screen, (255, 0, 0), (CAM_POS[0] + CAM_WIDTH // 2, CAM_POS[1] + CAM_HEIGHT // 2), 2)
 
-        if hohmann_burn_complete:
+        if hohmann_burn_complete :
             # Track the satellite’s position after the burn
             sat_x, sat_y = satellite.get_position()
-            # trail.append((sat_x, sat_y))
+
+            if len(trail) != 1:
+                trail.append((sat_x, sat_y))
         for pos in trail:
             screen_x = int(CENTER[0] + pos[0] * SCALE)
             screen_y = int(CENTER[1] - pos[1] * SCALE)
             pygame.draw.circle(screen, (200, 200, 200), (screen_x, screen_y), 2)
+
+            # Draw a line from the satellite's position through the Sun to Mars' orbital radius
+            sun_x_screen = int(CENTER[0] + sx * SCALE)
+            sun_y_screen = int(CENTER[1] - sy * SCALE)
+
+
+            sat_to_sun_dx = sun_x_screen - screen_x
+            sat_to_sun_dy = sun_y_screen - screen_y
+            line_length = int(1.524 * AU * SCALE * 2)  # Mars' orbital radius scaled
+            end_x = screen_x + int(sat_to_sun_dx / np.hypot(sat_to_sun_dx, sat_to_sun_dy) * line_length)
+            end_y = screen_y + int(sat_to_sun_dy / np.hypot(sat_to_sun_dx, sat_to_sun_dy) * line_length)
+            pygame.draw.line(screen, (255, 255, 255), (screen_x, screen_y), (end_x, end_y), 1)
 
         # Limit the trail length to avoid performance issues
         # if len(trail) > 1000:  # Adjust the limit as needed
