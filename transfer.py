@@ -10,6 +10,7 @@ M_sun = 1.989e30
 AU = 1.496e11
 YEAR = 365.25 * 24 * 3600
 R_earth = 6.371e6
+
 WIDTH, HEIGHT = 1000, 1000
 SCALE = WIDTH / (7 * AU)
 CENTER = (WIDTH // 2, HEIGHT // 2)
@@ -312,12 +313,12 @@ while running:
         r_aphelion = a * (1 + e_mag)
         r_aphelion_vec = r_aphelion * (-e_vec[:2] / e_mag)  # 2D position vector
 
-        screen_pos = r_perihelion_vec * SCALE + sun_screen
+        screen_pos = r_aphelion_vec * SCALE + sun_screen
 
 
         #scaled to screen
         sun_screen_pos = np.array([CENTER[0], CENTER[1]])
-        screen_pos = (r_perihelion_vec * SCALE)+ sun_screen_pos
+        screen_pos = (r_aphelion_vec * SCALE)+ sun_screen_pos
         
         pygame.draw.circle(screen, (255, 0, 0), screen_pos.astype(int), 50)
 
